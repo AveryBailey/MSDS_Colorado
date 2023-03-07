@@ -1,0 +1,178 @@
+---
+title: 'Week 3 Project: NYPD Shootings'
+author: "Avery Bailey"
+date: "2023-03-06"
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+# Children Shot Across New York
+
+### Part 1: Start RMD and Tidy Data
+The following data is pulled from a government data website, https://catalog.data.gov/ , and comes with the following description:
+
+"This is a breakdown of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year".
+
+  The data is manually extracted, added, and reviewed. While it states that it covers up to the previous calendar year the current data only goes up to December of 2021. No new data for 2022 has been added as of yet. It is important to note that this data set most likely not a complete list of all shooting, as it only contains those involving the NYPD, either through hospital reporting, investigation or other means. Shooting without the involvement of the police or heath care will not be included. It also only includes data on shooting that have a victim. Events where shots are fired but there are no casualties will not be recorded in this data. 
+
+  In this report I will look at yearly data of shooting incidents involving children as victims. A child will be any person under the age of 18. By looking at the yearly data I can establish a rough trend in gun incidents with children. This may help to indicate changin public opinion on guns, or it may help to asses the success or failure of regulations and laws. 
+
+The following libraries were used in the analysis of this data:
+
+* tidyverse
+* lubridate
+
+```{r}
+
+#City of New York — List of every shooting incident that occurred in NYC going back to 2006 through the end of the previous calendar year. This is a breakdown of every shooting incident...
+fileNY <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv"
+nypdata <- read_csv(fileNY)
+
+
+#reduce the number of variables we are dealing with
+#removed all columns about the perp, and specific location data. limiting
+#to precint and boro. 
+nypd_reduced <- nypdata %>% select(INCIDENT_KEY: PRECINCT, VIC_AGE_GROUP:VIC_RACE) %>%
+  mutate(OCCUR_DATE = mdy(OCCUR_DATE))
+
+
+```
+### Part 2: Missing Data
+
+  No critical data appears to be missing. However, if there is missing data it will be dropped from the data frame. This was the case for many of the variables, such as those involving the the shooter. Many of those fields were left blank as the information is unknown or not reported. I removed those variables, and instead focused my analysis on the victims. 
+
+```{r}
+summary(nypd_reduced)
+```
+
+### Part 3: Graphics and Analysis
+```{r}
+
+#sort the data from oldest to newest. this will help show trends over time
+shot_by_date <- nypd_reduced
+shot_by_date <- arrange(shot_by_date, OCCUR_DATE, OCCUR_TIME)
+shot_by_date <- select(shot_by_date, OCCUR_DATE:VIC_RACE)
+
+#group by year and then month. Tally the total number of shooting per year
+#num variable is added to allow for easy summation
+children_shot <- filter(shot_by_date, VIC_AGE_GROUP == '<18')
+children_shot <- mutate(children_shot, NUM = 1, YEAR = year(OCCUR_DATE), MONTH = month(OCCUR_DATE))
+children_shot <- select(children_shot, YEAR, MONTH, OCCUR_TIME:NUM)
+children_shot <- group_by(children_shot, YEAR) %>% summarise(KIDS_SHOT = sum(NUM))
+#ungroup(children_shot)
+
+
+
+
+children_shot %>%
+ggplot(aes(x = YEAR, y = KIDS_SHOT)) + 
+geom_line(aes(color = "KIDS_SHOT")) +
+geom_line(aes(y = KIDS_SHOT, color = "KIDS_SHOT")) + 
+geom_point(aes(y = KIDS_SHOT, color = "KIDS_SHOT")) +
+theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))+
+labs(title = "Shooting in NY Involving Children", y = "Shooting Incidents")
+```
+
+
+
+  This graph show a clear trend of decreasing shooting involving children from 2006 to 2019. However, 2020 and 2021 is the only time two consecutive years have had an increase in child related shooting. It is intersing to note that through the decrease in shootings from 2006 to 20019 both of the major US political parties have had executive administrations, so there does not seem to be a correlation to polical parties (at least in relation to federal political parties). It also seems like the Pandemic had a negitive impact on the amout of shootings, though other factors may be at play too. This leads to a couple new questions:
+
+1. What factors disrupted the trend in 2020?
+2. Did the years 2016 through 2019 have unusually low amounts of shootings?
+3. Did regulations and access to guns change in 2020 or prior?
+4. What does this look like as a percentage of the city's child population?
+  
+  Question 1 would seem to have the COVID-19 pandemic as a major external pressure though this could also be the result of the shutdowns in repose to the pandemic, or people having more free time due to less school and online work, or people in financial need due to business closing. 
+
+```{r}
+
+#filter for only male kid victims
+males <- filter(shot_by_date, VIC_AGE_GROUP == '<18' & VIC_SEX == 'M')
+males <- mutate(males, NUM = 1, YEAR = year(OCCUR_DATE), MONTH = month(OCCUR_DATE))
+males <- select(males, YEAR, MONTH, OCCUR_TIME:NUM)
+males <- group_by(males, YEAR, VIC_SEX) %>% summarise(MALES_SHOT = sum(NUM))
+males <- select(males, YEAR, MALES_SHOT)
+#ungroup(males)
+
+#repeat for female victims
+females <- filter(shot_by_date, VIC_AGE_GROUP == '<18' & VIC_SEX == 'F')
+females <- mutate(females, NUM = 1, YEAR = year(OCCUR_DATE), MONTH = month(OCCUR_DATE))
+females <- select(females, YEAR, MONTH, OCCUR_TIME:NUM)
+females <- group_by(females, YEAR, VIC_SEX) %>% summarise(FEMALES_SHOT = sum(NUM))
+females <- select(females, YEAR, FEMALES_SHOT)
+#ungroup(females)
+
+#combine the two data frames
+all_children_shot <- full_join(males, females)
+all_children_shot <- mutate(all_children_shot, ALL_CHILDREN_VIC = sum(MALES_SHOT, FEMALES_SHOT))
+
+
+all_children_shot %>%
+    ggplot(aes(x = YEAR, y = MALES_SHOT)) + 
+    geom_line(aes(y = MALES_SHOT, color = "MALES_SHOT")) + 
+    geom_point(aes(y = MALES_SHOT, color = "MALES_SHOT")) +
+    geom_line(aes(y = FEMALES_SHOT, color = "FEMALES_SHOT")) + 
+    geom_point(aes(y = FEMALES_SHOT, color = "FEMALES_SHOT")) +
+    theme(legend.position = "bottom", axis.text.x = element_text(angle = 90)) + 
+    labs(title = "Shooting in NY Involving Children by Sex", y = "Shooting Incidents")
+
+```
+
+  From the data provided by the city government, it is clear the many more male children are the victims of shootings. While the number of male victims follows the sames trend as the earlier graph, decreasing from 2006 to 20019, and then increasing until 2021, the trend for female victims has be slowly decreasing and appears to be leveling out. Some questions that may arise from this data:
+
+1. Are male children exposed to more guns?
+2. Are male children more likely to obtain a gun?
+3. Are male children targeted more?
+4. Are female children more responsible around guns, and therefore less likely to be the victim of an accident? 
+5. How many of these are self inflicted?
+    + Hod do children of different genders care for their mental health?
+    + How do adults help with children of different genders mental health?
+  
+
+In this next section I will look to predict how many victims may be children given a total number of victims. 
+
+```{r}
+all_vic <- nypd_reduced
+all_vic <- arrange(all_vic, OCCUR_DATE, OCCUR_TIME)
+all_vic <- select(all_vic, OCCUR_DATE:VIC_RACE)
+
+all_vic <- mutate(all_vic, NUM = 1, YEAR = year(OCCUR_DATE), MONTH = month(OCCUR_DATE))
+all_vic <- select(all_vic, YEAR, MONTH, OCCUR_TIME:NUM)
+all_vic <- group_by(all_vic, YEAR) %>% summarise(ALL_VICS = sum(NUM))
+ungroup(all_vic)
+
+all_ages <- full_join(all_children_shot, all_vic)
+
+mod <- lm(ALL_CHILDREN_VIC ~ ALL_VICS, data = all_ages)
+
+temp <- tibble(pred = round(predict(mod), 0))
+all_ages_pred <- cbind(all_ages, PRED = temp$pred)
+
+ggplot(all_ages_pred) + 
+     geom_point(aes(x = YEAR, y = ALL_CHILDREN_VIC, color = "Child Victims Actual")) +
+     geom_line(aes(x = YEAR, y = ALL_CHILDREN_VIC, color = "Child Victims Actual")) +
+     geom_point(aes(x = YEAR, y = PRED, color = "Child Victims Predicted")) + 
+     geom_line(aes(x = YEAR, y = PRED, color = "Child Victims Predicted"))
+
+mod
+
+
+```
+
+  The above model demonstrates that we can reasonably predict the number of children involved in a shooting based on the number of all shooting incidents. This could be helpful when variable such as age are not available. Taking it a step further, we could do more modeling to predict gender too. This model will have the same biases as discussed earlier, only incidents reported to the NYPD are going to be included. 
+  
+### Part 4: Bias
+  
+  The data, even from the start of its collection, is bias to a degree. The fact that this data is collected by police and the government some people may choose not to report crimes due to distrust in police. While hospitals would be required to report gun shot wounds, some people may choose not to go to a hospital for fear of medical bills or the fear of arrest. Shootings are also less likely to be reported by citizens if the victim is also involved in illegal activity. This data is also recorded by hand, which offers another opportunity for biases to enter the data. Depending on the loggers personal beliefs and attitude certain groups of people could be under reported or over reported. Missing fields could be filled in with assumptions and prejudice. These factors all lead to under reported shootings and intrinsically bias data, which in turn will skew the data. 
+  
+  There are also my own personal biases to deal with while analyzing this report. As I am for strong run regulation I had to be sure I was not looking aid my arguments by showing the data in a misleading way, or by only showing part of the data. To do this I removed all of the perpetrator variables. Doing so ensured I could not tell if the shootings were a result of an accident, self inflicted, or an act of aggression. I was also sure to work with the full time period included in the original data set. This way I could not cherry pick a time period, like that of 2006 to 2011, to display high number of gun violence. 
+  
+  
+  
+ 
