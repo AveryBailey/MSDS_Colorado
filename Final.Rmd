@@ -1,0 +1,203 @@
+---
+title: "Final_Part2"
+author: "Avery Bailey"
+date: "2023-03-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(lubridate)
+```
+
+
+### Importing the Data
+
+This data comes from Johns Hopkins, and is reported COVID-19 cases and deaths for US states and other Countries. 
+This data shows cases per date and the location of the cases. The URLs below link to the data, it is updated regularly.  
+
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_global.csv
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv
+https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_global.csv
+
+There are multiple files I would like to look at so I am going to set the first part of the URL as a string. Then I will save the specific files URL extensions as an array of strings. I can then concatenate them and call each individual URL from the new array. 
+```{r}
+url_in <- "https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/"
+ 
+file_names <- c("time_series_covid19_confirmed_US.csv",  "time_series_covid19_confirmed_global.csv", "time_series_covid19_deaths_US.csv",  "time_series_covid19_deaths_global.csv")
+ 
+ 
+urls <- str_c(url_in, file_names)
+
+us_cases <- read_csv(urls[1])
+global_cases <- read_csv(urls[2])
+us_deaths <- read_csv(urls[3])
+global_deaths <- read_csv(urls[4])
+
+```
+
+### Tidy the Data
+
+#### Step 1: removing variables
+
+There are many variables I do not need to know in order to analysis the data in the way that I wish. So to clean up the data I decided to get rid of any variables I will not be using. Such as the latitute and longitude. 
+
+```{r}
+global_cases <- global_cases %>%
+    pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "cases") %>%
+    select(-c(Lat,Long))
+
+global_deaths <- global_deaths %>%
+    pivot_longer(cols = -c('Province/State', 'Country/Region', Lat, Long), names_to = "date", values_to = "deaths") %>%
+    select(-c(Lat,Long))
+
+
+us_cases <- us_cases %>%
+  pivot_longer(cols = -(UID:Combined_Key), names_to = "date",values_to = "cases")%>%
+  select(Admin2:cases)%>%
+  mutate(date = mdy(date))%>%
+  select(-c(Lat, Long_))
+  
+us_deaths <- us_deaths %>%
+  pivot_longer(cols = -(UID:Population), names_to = "date",values_to = "deaths")%>%
+  select(Admin2:deaths)%>%
+  mutate(date = mdy(date))%>%
+  select(-c(Lat, Long_))
+
+```
+
+#### Step 2: Combining sources
+
+I think combine multiple sources so that all the informaiton I need is contained in one data frame.
+
+```{r}
+global <- global_cases %>%
+  full_join(global_deaths)%>%
+  rename(Country_Region = 'Country/Region', Province_State = 'Province/State') %>%
+  mutate(date = mdy(date))
+  
+global <- global %>% filter(cases >0)
+
+us <- us_cases %>%
+  full_join(us_deaths)
+
+us <- us %>% filter(cases > 0)
+
+us_by_state <- us %>% 
+  group_by(Province_State, Country_Region, date) %>% 
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% 
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Province_State, Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+  
+us_totals <- us_by_state %>% 
+  group_by(Country_Region, date) %>% 
+  summarize(cases = sum(cases), deaths = sum(deaths), Population = sum(Population)) %>% 
+  mutate(deaths_per_mill = deaths *1000000 / Population) %>%
+  select(Country_Region, date, cases, deaths, deaths_per_mill, Population) %>%
+  ungroup()
+
+us_by_state <- us_by_state %>%
+      mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths))
+      
+us_totals <- us_totals %>% 
+      mutate(new_cases = cases - lag(cases), new_deaths = deaths - lag(deaths))
+```
+
+#### Investigating the Data
+##### Are new cases still increasing?
+
+Coming out of the pandemic it may seem like COVID-19 is behind us, but I want to see what the data has to say about that. So the first thing I want to investigate is how the state I live is is doing post lock down. I want to know if new cases are slowing down or increasing and how much.
+
+To do this I filter out all data not related to Michigan, and remove dates with no new casses. I then plot the new cases, and new deaths to create an easy to understand visual.  
+
+```{r}
+  state = "Michigan"
+  michigan <- filter(us_by_state, cases > 0, new_cases > -1) %>% filter(Province_State == state)
+  
+ plt <- michigan%>%
+    filter(new_cases > 0)%>%
+        ggplot(aes(x = date, y = new_cases)) + 
+        geom_line(aes(color = "new_cases")) +
+        geom_point(aes(color = "new_cases")) +
+        geom_line(aes(y = new_deaths, color = "new_deaths")) + 
+        geom_point(aes(y = new_deaths, color = "new_deaths")) +
+        scale_y_log10() +
+        theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))+
+        labs(title = "Michigan, New Cases")
+ 
+ suppressWarnings(print(plt))
+
+```
+
+From the above graph it seems that while the amount of new cases and deaths are not increasing in Michigan, they are not decreasing either. The data looks to level out, which could indicate that we are reaching a point where the spread of COVID-19 has reached a limit so to say. Though more data would be needed to draw harder conclusions. 
+
+This data is also less reliable after 2022: reporting drops off dramatically. This could be due to restrictions in work being lifted so people do not test as often. This factor may also contribute to fewer reports of new cases making it artificially lower.
+
+
+##### Which states had the most cases?
+
+Now that I know there are still many new cases in my state I want to see how other states compare. So I am going to rank all the states based on their total number of cases. I want to know which states had the most cases of COVID-19 so I will also plot the top ten states. 
+
+```{r}
+top_ten_state <- group_by(us_by_state, Province_State) %>% summarise(max = max(cases))
+top_ten_state <- arrange(top_ten_state, max)
+top_ten_state <- tail(top_ten_state, 10)
+```
+
+
+```{r}
+
+top_ten_state%>%
+  ggplot(aes(x = Province_State, y = max)) +
+  geom_col() +
+  labs(title = "Ten States with the Highest Cases", y = "Cases")
+```
+
+
+Interestingly enough, Michigan did come in the top 10, ranked as 10th. Which may help to give more insight on why we are still seeing so many new cases and deaths. 
+
+As seen above California and Texas are the top two, which makes sense when you consider their large populations. Florida comes in at number three above New York, which is a little suprising. Though it may be explained by differences in policy or average age of population. 
+
+Some further questions to explore
+* What are these in terms of percentage of population?
+* What were the policies in place in each state?
+* What is the average age of the population in each state?
+
+
+##### Modeling
+
+Now that I know how Michigan compares to other states, I want to zoom out a little and see how the entire nation is doing, and try to predict if things will get better as per the available data. 
+I want to see if I can create a model to predict the number of cases in the US. 
+
+```{r}
+us_totals <- mutate(us_totals, cases_per_mil = cases * 1000000 / Population)
+
+mod <- lm(cases_per_mil ~ date, us_totals)
+
+us_totals <- mutate(us_totals, predt = Population * predict(mod)/1000000)
+
+plt2 <- us_totals %>%
+ggplot(aes(x = date, y = cases)) + 
+geom_line(aes(color = "actual")) +
+geom_point(aes(color = "actual")) +
+geom_line(aes(y = predt, color = "predicted cases")) + 
+geom_point(aes(y = predt, color = "predicted cases")) +
+scale_y_log10() +
+theme(legend.position = "bottom", axis.text.x = element_text(angle = 90))+
+labs(title = "Modeled Cases in the US", y = "cases")
+
+suppressWarnings(print(plt2))
+
+```
+
+
+The above prediction gives us a decent way to predict the number of cases in the future. But its also important to note that the model is only reliable after almost half a year of data. While the cases continue to grow it looks like the US is approaching stabilization and a limit.
+
+##### Bias
+
+This data is very helpful in analyzing the history of the pandemic, and predicting the future of COVID-19, but it also has some biases. Firstly, in the US, the pandemic became a hugely polarizing topic. Which may mean that based on their political views someone may be less likely to report cases. It has a bias towards those with access to healthcare as much of the reporting likely comes through medical centers. Which means cases in impoverished people, and people in lightly populated areas may go unreported. 
+
+As for my own biases, when going through this data I found myself wanting my state to have fewer cases than others, as if it were a compitition, and therefore had a bias toward making Michigan look good. However, simply recognizing the bias can go a long way in preventing it from influencing your data. It is also one of the reasons I took the national data without states, so that it would be aggregate and hide the Michigan data in with all the other states. 
